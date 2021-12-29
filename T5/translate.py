@@ -6,14 +6,14 @@ import argparse
 
 # オプション
 parser = argparse.ArgumentParser(description='Using mT5 with ABCI')
-parser.add_argument('zip_file', nargs='+', help='corpus')  
+parser.add_argument('zip_file', help='corpus')  
 
 args = parser.parse_args()
 
 with zipfile.ZipFile(args.zip_file) as existing_zip:
-    existing_zip.extractall('data/temp/ext')
+    existing_zip.extractall('temp/model')
 
-MODEL_DIR = "/content/model"
+MODEL_DIR = "temp/model"
 
 # トークナイザー（SentencePiece）
 tokenizer = MT5Tokenizer.from_pretrained(MODEL_DIR, is_fast=True)

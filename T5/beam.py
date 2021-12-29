@@ -33,11 +33,13 @@ import datetime
 
 # オプション
 parser = argparse.ArgumentParser(description='Using mT5 with ABCI')
-parser.add_argument('input_file', nargs='+', help='corpus')
+parser.add_argument('input_file', help='corpus')
 parser.add_argument('--model', action='store_true', help='Save the model as a zip file')
 parser.add_argument('--result', action='store_true', help='Output the result as a tsv file')
 
 args = parser.parse_args()
+
+d_now = datetime.datetime.now()
 
 
 # 事前学習済みモデル
@@ -443,14 +445,14 @@ if __name__ == '__main__':
         shutil.make_archive(f'trained_model/model_mT5_{INPUT_tsv_name}', 'zip', root_dir='model')
 
     with open('log/trainlog_mT5.txt', mode= 'a') as f:
-        f.write(datetime.datetime.now())
-        f.write('Input File :', INPUT_tsv)
-        f.write('Output File :', f'result/{OUTPUT_tsv}')
-        f.write('Pretrained Model :', f'trained_model/model_mT5_{INPUT_tsv_name}')
-        f.write(f'Train Data : {train_num}, Validation Data : {valid_num}, Test Data : {test_num}')
-        f.write('Number of parameters :', params)
-        f.write('Training Time :', s2-s1)
-        f.write('\n\n')
+        f.write(d_now.strftime('%Y-%m-%d %H:%M:%S') + '\n')
+        f.write(f'Input File : {INPUT_tsv}\n')
+        f.write(f'Output File : result/{OUTPUT_tsv}\n')
+        f.write(f'Pretrained Model : trained_model/model_mT5_{INPUT_tsv_name}.zip\n')
+        f.write(f'Train Data : {train_num}, Validation Data : {valid_num}, Test Data : {test_num}\n')
+        f.write(f'Number of parameters : {params}\n')
+        f.write(f'Training Time : {s2-s1}\n')
+        f.write('\n')
 
     print('--- FINISH ---')
     print('INPUT :', INPUT_tsv)

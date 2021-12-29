@@ -8,9 +8,11 @@ import argparse
 
 # オプション
 parser = argparse.ArgumentParser(description='evaluation')
-parser.add_argument('input_file', nargs='+', help='corpus')
+parser.add_argument('input_file', help='corpus')
 
 args = parser.parse_args()
+
+d_now = datetime.datetime.now()
 
 PATH = args.input_file
 PATH = PATH[PATH.rfind('/')+1:]
@@ -59,10 +61,10 @@ def leven_bleu():
         pred = pred.strip()
 
         sum_l += Levenshtein.ratio(py, pred)
-        sum_b += bleu_score.sentence_bleu(py.split(), pred.split(), weights=(0.25, 0.25, 0.25, 0.25))
+        sum_b += bleu_score.sentence_bleu(py.split(), pred.split())
 
     leven = sum_l / len(df)
-    bleu = sum / len(df)
+    bleu = sum_b / len(df)
 
     return leven, bleu
 
@@ -71,9 +73,8 @@ if __name__ == '__main__':
     leven, bleu = leven_bleu()
 
     with open('log/evallog_mT5.txt', mode= 'a') as f:
-        f.write(datetime.datetime.now())
-        f.write('Correct Rate :', per_correct)
-        f.write('Levenshtein Distance :', leven)
-        f.write('BLEU :', bleu)
-        f.write('\n\n')
-
+        f.write(d_now.strftime('%Y-%m-%d %H:%M:%S') + '\n')
+        f.write(f'Correct Rate : {per_correct}\n')
+        f.write(f'Levenshtein Distance : {leven}\n')
+        f.write(f'BLEU : {bleu}\n')
+        f.write('\n')
