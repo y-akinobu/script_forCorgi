@@ -21,22 +21,28 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 # from sklearn.model_selection import cross_val_score
 from timeit import default_timer as timer
-import argparse  
+import shutil
+import argparse
+import datetime
+import time
+import os
 
-#オプションを設定する
-parser = argparse.ArgumentParser(description='Using mT5 with ABCI')
+# オプションを設定する
+parser = argparse.ArgumentParser(description='Using Transformer with ABCI')
 parser.add_argument('input_file', help='corpus')
-parser.add_argument('-e','--epochs', help='epochs',type=int,default=50)
-parser.add_argument('--zip', action='store_true',help='Save the model as a zip file')
-parser.add_argument('--result',action='store_true',help='Output the result as a tsv file')    
+# parser.add_argument('-e','--epochs', help='epochs',type=int,default=50)
+parser.add_argument('--model', action='store_true', help='Save the model as a zip file')
+parser.add_argument('--result', action='store_true', help='Output the result as a tsv file')
 
-args = parser.parse_args() 
+args = parser.parse_args()
+
+d_now = datetime.datetime.now()
 
 
-#関数の定義
+# 関数の定義
 
 def jpn_tokenizer(text):
-  return [token for token in tokenizer.tokenize(text) if token != " " and len(token) != 0]   # 句点も返さなくて良いかも
+  return [token for token in tokenizer.tokenize(text) if token != " " and len(token) != 0]
 
 def py_tokenizer(text):
   return [tok for tok in text.split()][:MAX_LEN]
@@ -74,8 +80,6 @@ def from_tsv(f_path):
 
   return NUM_LINES
 
-
-# トークンのリストを生成？
 def yield_tokens(data_iter: Iterable, language: str) -> List[str]:
     language_index = {SRC_LANGUAGE: 0, TGT_LANGUAGE: 1}
 
@@ -88,14 +92,11 @@ def _create_data_from_tsv(data_path):
         for row in reader:
             yield row[1], row[0]   # SRC/TGT の順でreturn?
 
-
-# JPN2Py データセットの作成
 def JPN2Py(root, split, language_pair=('jpn', 'py')):
     path = root + '/' + split + '.tsv'
 
     # src とtgt をセットにしたデータセットを返す
     return _RawTextIterableDataset(DATASET_NAME, NUM_LINES[split], _create_data_from_tsv(path))
-
 
 class Seq2SeqTransformer(nn.Module):
     def __init__(self, 
@@ -173,14 +174,11 @@ class TokenEmbedding(nn.Module):
     def forward(self, tokens: Tensor):
         return self.embedding(tokens.long()) * math.sqrt(self.emb_size)
 
-
-# モデルが予測を行う際に、未来の単語を見ないようにするためのマスク
 def generate_square_subsequent_mask(sz):
     mask = (torch.triu(torch.ones((sz, sz), device=DEVICE)) == 1).transpose(0, 1)
     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
     return mask
 
-# ソースとターゲットのパディングトークンを隠すためのマスク
 def create_mask(src, tgt):
     src_seq_len = src.shape[0]
     tgt_seq_len = tgt.shape[0]
@@ -192,7 +190,6 @@ def create_mask(src, tgt):
     tgt_padding_mask = (tgt == PAD_IDX).transpose(0, 1)
     return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
 
-# 連続した操作をまとめて行うためのヘルパー関数
 def sequential_transforms(*transforms):
     def func(txt_input):
         for transform in transforms:
@@ -200,14 +197,11 @@ def sequential_transforms(*transforms):
         return txt_input
     return func
 
-# SOS/EOSトークンを追加し、入力配列のインデックス用のテンソルを作成
 def tensor_transform(token_ids: List[int]):
     return torch.cat((torch.tensor([SOS_IDX]), 
                       torch.tensor(token_ids), 
                       torch.tensor([EOS_IDX])))
 
-
-# データサンプルをバッチテンソルに照合
 def collate_fn(batch):
     src_batch, tgt_batch = [], []
     for src_sample, tgt_sample in batch:
@@ -217,7 +211,6 @@ def collate_fn(batch):
     src_batch = pad_sequence(src_batch, padding_value=PAD_IDX)
     tgt_batch = pad_sequence(tgt_batch, padding_value=PAD_IDX)
     return src_batch, tgt_batch
-
 
 def train_epoch(model, optimizer):
     model.train()
@@ -287,8 +280,6 @@ def beam_topk(model, ys, memory, beamsize):
     
     return next_prob, next_word
 
-
-# greedy search を使って翻訳結果 (シーケンス) を生成
 def beam_decode(model, src, src_mask, max_len, beamsize, start_symbol):
     src = src.to(DEVICE)
     src_mask = src_mask.to(DEVICE)
@@ -352,8 +343,6 @@ def beam_decode(model, src, src_mask, max_len, beamsize, start_symbol):
 
     return ys_result
 
-
-# 翻訳
 def translate(model: torch.nn.Module, src_sentence: str, beamsize):
     pred_list = []
     model.eval()
@@ -369,25 +358,15 @@ def translate(model: torch.nn.Module, src_sentence: str, beamsize):
     return pred_list, sorted(prob_list, reverse=True)
 
 
-
 if __name__ == '__main__':
-
-
-    #プログラムの実行
 
     # 再現性のためにSEED 値を固定
     SEED = 1234
 
     torch.manual_seed(SEED)
     torch.cuda.manual_seed(SEED)
-    # torch.backends.cudnn.deterministic = True
-    # torch.use_deterministic_algorithms(True)
 
     INPUT_tsv = args.input_file
-    # INPUT_tsv = 'corpus_Python-JPN/Corpus-DS/DS_B.tsv'
-    # INPUT_tsv = 'corpus_Python-JPN/forPRO/py.tsv'
-
-    OUTPUT_tsv = 'result_DS_B.tsv'
     BEAMSIZE = 5
 
     # SRC (source) : 原文
@@ -407,18 +386,12 @@ if __name__ == '__main__':
     token_transform[SRC_LANGUAGE] = jpn_tokenizer
     token_transform[TGT_LANGUAGE] = py_tokenizer
 
-    # kf = KFold(n_splits=3, shuffle=True, random_state=0)
-
     NUM_LINES = from_tsv(INPUT_tsv)
-    #   NUM_LINES = from_tsv_except_test(INPUT_tsv)
-
-    print(NUM_LINES)
-
-
+    
     # 特殊トークンの定義
     UNK_IDX, PAD_IDX, SOS_IDX, EOS_IDX = 0, 1, 2, 3
     # special_symbols = ['<unk>', '<pad>', '<sos>', '<eos>', '<blk>', '</blk>', '<sep>', '<A>', '<B>', '<C>', '<D>', '<E>', '<F>', '<G>', '<H>', '<I>', '<J>', '<K>', '<L>', '<M>', '<N>', '<O>', '<P>', '<Q>', '<R>', '<S>', '<T>', '<U>', '<V>', '<W>', '<X>', '<Y>', '<Z>', '<a>', '<b>', '<c>', '<d>', '<e>', '<f>', '<g>', '<h>', '<i>', '<j>', '<k>', '<l>', '<m>', '<n>', '<o>', '<p>', '<q>', '<r>', '<s>', '<t>', '<u>', '<v>', '<w>', '<x>', '<y>', '<z>']
-    special_symbols = ['<unk>', '<pad>', '<sos>', '<eos>', '<blk>', '</blk>', '<sep>', '<A>', '<B>', '<C>', '<D>', '<E>', '<a>', '<b>', '<c>', '<d>', '<e>', '<var1>', '<var2>', '<var3>', '<var4>', '<var5>', '<val1>', '<val2>', '<val3>', '<val4>', '<val5>', '<name1>', '<name2>', '<name3>', '<name4>', '<name5>',]
+    special_symbols = ['<unk>', '<pad>', '<sos>', '<eos>', '<blk>', '</blk>', '<sep>', '<A>', '<B>', '<C>', '<D>', '<E>', '<a>', '<b>', '<c>', '<d>', '<e>', '<var1>', '<var2>', '<var3>', '<var4>', '<var5>', '<var6>', '<var7>', '<val1>', '<val2>', '<val3>', '<val4>', '<val5>', '<val6>', '<val7>', '<name1>', '<name2>', '<name3>', '<name4>', '<name5>', '<name6>', '<name7>']
 
     DATASET_NAME = "JPN2Py"
 
@@ -436,23 +409,14 @@ if __name__ == '__main__':
     for ln in [SRC_LANGUAGE, TGT_LANGUAGE]:
       vocab_transform[ln].set_default_index(UNK_IDX)
 
-
-
-    # key : vocab, value : idx の辞書
-    # vocab_transform[SRC_LANGUAGE].vocab.get_stoi()
-
-
-    # vocab のリスト
-    # vocab_transform[SRC_LANGUAGE].vocab.get_itos()[:10]
-
-
     # パラメータの定義
     SRC_VOCAB_SIZE = len(vocab_transform[SRC_LANGUAGE])
     TGT_VOCAB_SIZE = len(vocab_transform[TGT_LANGUAGE])
-    EMB_SIZE = 512  # BERT の次元に揃えれば良いよ
+    EMB_SIZE = 512
     NHEAD = 8
     FFN_HID_DIM = 512
-    BATCH_SIZE = 128
+    BATCH_SIZE = 32
+    # BATCH_SIZE = 128
     NUM_ENCODER_LAYERS = 3
     NUM_DECODER_LAYERS = 3
 
@@ -464,7 +428,6 @@ if __name__ == '__main__':
                                      EMB_SIZE, NHEAD, SRC_VOCAB_SIZE, TGT_VOCAB_SIZE,
                                      FFN_HID_DIM)
 
-    # TODO: ?
     for p in transformer.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
@@ -479,11 +442,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(
         transformer.parameters(), lr=0.0001, betas=(0.9, 0.98), eps=1e-9
     )
-
-    print(f'Vocab size : SRC = {SRC_VOCAB_SIZE}, TGT = {TGT_VOCAB_SIZE}')
-
-
-
+    
     # 文字列をテンソルのインデックスに変換するための言語テキスト変換
     text_transform = {}
     for ln in [SRC_LANGUAGE, TGT_LANGUAGE]:
@@ -491,13 +450,12 @@ if __name__ == '__main__':
                                                    vocab_transform[ln], #Numericalization
                                                    tensor_transform) # Add SOS/EOS and create tensor
 
-
-
-    NUM_EPOCHS = args.epochs
+    NUM_EPOCHS = 50
     CNT = 0
 
     best_val_loss = float('inf')
 
+    s1 = time.time()
     for epoch in range(1, NUM_EPOCHS+1):
         start_time = timer()
         train_loss = train_epoch(transformer, optimizer)
@@ -511,39 +469,20 @@ if __name__ == '__main__':
         else:
             CNT += 1
 
-        if CNT == 5:
+        if CNT == 3:
             print('Early Stopping')
             break
 
         print((f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s"))
 
     transformer.load_state_dict(torch.load('tut6-model.pt'))
+    s2 = time.time()
 
     # 学習済みモデルのパラメータ数
     params = 0
     for p in transformer.parameters():
         if p.requires_grad:
             params += p.numel()
-
-    print('Number of parameters : ', params)
-
-
-    # ボキャブのセーブ
-    torch.save(vocab_transform, 'vocab_obj_DS-B.pth')
-
-    # モデルのセーブ
-    torch.save(transformer.state_dict(), 'model_DS-B.pt')
-
-
-    # 翻訳したい原文を入力
-    sentence = "<A>の棒グラフを表示する"
-
-
-    # 予測
-    pred_list, prob_list = translate(transformer, sentence, BEAMSIZE)
-    for pred, prob in zip(pred_list, prob_list):
-        print('predicted tgt :', pred, prob)
-
 
     test_iter = JPN2Py(root='data', split='test', language_pair=(SRC_LANGUAGE, TGT_LANGUAGE))
 
@@ -555,13 +494,37 @@ if __name__ == '__main__':
         if len(pred) != 0:
             df = df.append({'source': test_sentence[0], 'target': test_sentence[1].strip(), 'pred': pred[0].strip()}, ignore_index=True)
 
+    INPUT_tsv = INPUT_tsv[INPUT_tsv.rfind('/')+1:]
+    INPUT_tsv_name = INPUT_tsv.replace('.tsv', '')
+    OUTPUT_tsv = f'result_TF_{INPUT_tsv_name}.tsv'
 
-    
-    if args.zip == True:
-        df.to_csv(OUTPUT_tsv, index=False, header=False, sep='\t', quoting=csv.QUOTE_NONE, doublequote=False, escapechar='\n')
-    elif args.result==True:
-        print('pass')
-        # shutil.make_archive(f'model_{INPUT_tsv_name}_forMT5','zip',root_dir='model')
+    if args.result:
+        df.to_csv(f'result/{OUTPUT_tsv}', index=False, header=False, sep='\t', quoting=csv.QUOTE_NONE, doublequote=False, escapechar='\n')
+    elif args.model:
+        os.mkdir(f'trained_model/{INPUT_tsv}_forTF')
+        torch.save(vocab_transform, f'trained_model/{INPUT_tsv}_forTF/vocab_obj.pth')
+        torch.save(transformer.state_dict(), f'trained_model/{INPUT_tsv}_forTF/model.pt')
+        shutil.make_archive(f'trained_model/{INPUT_tsv}_forTF_p','zip',root_dir=f'trained_model/{INPUT_tsv}_forTF')
     else:
-        df.to_csv(OUTPUT_tsv, index=False, header=False, sep='\t', quoting=csv.QUOTE_NONE, doublequote=False, escapechar='\n')
-        # shutil.make_archive(f'model_{INPUT_tsv_name}_forMT5','zip',root_dir='model')
+        df.to_csv(f'result/{OUTPUT_tsv}', index=False, header=False, sep='\t', quoting=csv.QUOTE_NONE, doublequote=False, escapechar='\n')
+        os.mkdir(f'trained_model/{INPUT_tsv}_forTF')
+        torch.save(vocab_transform, f'trained_model/{INPUT_tsv}_forTF/vocab_obj.pth')
+        torch.save(transformer.state_dict(), f'trained_model/{INPUT_tsv}_forTF/model.pt')
+        shutil.make_archive(f'trained_model/{INPUT_tsv}_forTF_p','zip',root_dir=f'trained_model/{INPUT_tsv}_forTF')
+
+    with open('log/trainlog_TF.txt', mode= 'a') as f:
+        f.write(d_now.strftime('%Y-%m-%d %H:%M:%S') + '\n')
+        f.write(f'Input File : {INPUT_tsv}\n')
+        f.write(f'Output File : result/{OUTPUT_tsv}\n')
+        # f.write(f'Pretrained Model : trained_model/model_TF_{INPUT_tsv_name}.zip\n')
+        f.write(f'Train Data : {NUM_LINES["train"]}, Validation Data : {NUM_LINES["valid"]}, Test Data : {NUM_LINES["test"]}\n')
+        f.write(f'Number of parameters : {params}\n')
+        f.write(f'Training Time : {s2-s1}\n')
+        f.write('\n')
+
+    print('--- FINISH ---')
+    print('INPUT :', INPUT_tsv)
+    print(f'Train Data : {NUM_LINES["train"]}, Validation Data : {NUM_LINES["valid"]}, Test Data : {NUM_LINES["test"]}')
+    print('Number of parameters :', params)
+    print('Training Time :', s2-s1)
+
